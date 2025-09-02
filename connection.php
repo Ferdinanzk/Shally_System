@@ -4,10 +4,10 @@
 
 // 1. Set database credentials
 // Replace these with your actual database details.
-$servername = "localhost"; // Or your server's IP address
-$username = "root";   // Your database username
-$password = "";   // Your database password
-$dbname = "莎莉好食_1";     // The name of the database you want to connect to
+$servername = "bkiikl54fajwqss2wozh-mysql.services.clever-cloud.com"; // Or your server's IP address
+$username = "ul8htwam7hmnying";   // Your database username
+$password = "R2KWflMn4fRrDGXUfHPS";   // Your database password
+$dbname = "bkiikl54fajwqss2wozh";     // The name of the database you want to connect to
 
 // 2. Create connection
 // We are creating a new mysqli object. The constructor takes the credentials as parameters.

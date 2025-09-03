@@ -70,7 +70,7 @@ $assigned_items_result = $conn->query("SELECT item_id, quantity FROM order_items
 
 // --- PAGE SETUP ---
 $page_title = '指派產品至訂單 #' . $order_id;
-require_once '../template/header.php';
+require_once __DIR__ . '../template/header.php';
 ?>
 
 <div class="container mx-auto p-4 sm:p-6 lg:p-8">
@@ -252,5 +252,5 @@ document.addEventListener('DOMContentLoaded', function () {
 
 <?php
 $conn->close();
-require_once '../template/footer.php';
+require_once __DIR__ . '../template/footer.php';
 ?>

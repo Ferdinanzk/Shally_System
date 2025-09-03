@@ -1,226 +1,267 @@
 <?php
-// 1. Include the database connection using a more robust path
+// --- SETUP & DATA FETCHING (with security enhancements) ---
 require_once __DIR__ . '/../connection.php';
 
-// --- INITIALIZATION ---
-$order_id = null;
 $error_message = '';
 $success_message = '';
-$order_customer_name = '';
-$existing_items = [];
 
-// Get the Order ID from the URL
-if (isset($_GET['order_id']) && is_numeric($_GET['order_id'])) {
-    $order_id = intval($_GET['order_id']);
-
-    // Fetch the customer's name for display
-    $customer_stmt = $conn->prepare("SELECT c.`name(abbreviation)` FROM orders o JOIN customer c ON o.customer_id = c.id WHERE o.id = ?");
-    $customer_stmt->bind_param("i", $order_id);
-    $customer_stmt->execute();
-    $customer_result = $customer_stmt->get_result();
-    if ($customer_row = $customer_result->fetch_assoc()) {
-        $order_customer_name = $customer_row['name(abbreviation)'];
-    }
-    $customer_stmt->close();
-
-    // Fetch existing items for this order to pre-populate the form
-    $existing_items_stmt = $conn->prepare("SELECT item_id, quantity FROM order_items WHERE order_id = ?");
-    $existing_items_stmt->bind_param("i", $order_id);
-    $existing_items_stmt->execute();
-    $existing_items_result = $existing_items_stmt->get_result();
-    while ($row = $existing_items_result->fetch_assoc()) {
-        $existing_items[$row['item_id']] = $row['quantity'];
-    }
-    $existing_items_stmt->close();
-} else {
-    // Redirect if no valid order_id is provided
+// 1. Validate the Order ID from the URL
+if (!isset($_GET['order_id']) && !isset($_POST['order_id'])) {
+    // Redirect to the main orders page if no ID is specified
     header("Location: ../orders.php");
     exit();
 }
+$order_id = intval($_GET['order_id'] ?? $_POST['order_id']);
 
-// --- FORM SUBMISSION LOGIC ---
+
+// --- Handle POST request (form submission) ---
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
-    $items = isset($_POST['items']) ? $_POST['items'] : [];
-    
-    // Start a transaction
+    // Start a transaction for data safety
     $conn->begin_transaction();
-    try {
-        // Step 1: Delete all existing items for this order
-        $delete_stmt = $conn->prepare("DELETE FROM order_items WHERE order_id = ?");
-        $delete_stmt->bind_param("i", $order_id);
-        $delete_stmt->execute();
-        $delete_stmt->close();
-        
-        // Step 2: Insert the new set of items
-        if (!empty($items)) {
-            $insert_stmt = $conn->prepare("INSERT INTO order_items (order_id, item_id, quantity) VALUES (?, ?, ?)");
-            foreach ($items as $item_id => $quantity) {
-                $quantity = intval($quantity);
-                if ($quantity > 0) { // Only insert if quantity is positive
-                    $item_id = intval($item_id);
-                    $insert_stmt->bind_param("iii", $order_id, $item_id, $quantity);
-                    $insert_stmt->execute();
-                }
-            }
-            $insert_stmt->close();
-        }
-        
-        // If everything was successful, commit the transaction
-        $conn->commit();
-        $success_message = "產品已成功更新！";
-        
-        // Refresh existing items array after successful update
-        $existing_items = [];
-        $existing_items_stmt = $conn->prepare("SELECT item_id, quantity FROM order_items WHERE order_id = ?");
-        $existing_items_stmt->bind_param("i", $order_id);
-        $existing_items_stmt->execute();
-        $existing_items_result = $existing_items_stmt->get_result();
-        while ($row = $existing_items_result->fetch_assoc()) {
-            $existing_items[$row['item_id']] = $row['quantity'];
-        }
-        $existing_items_stmt->close();
 
-    } catch (mysqli_sql_exception $exception) {
-        // If anything went wrong, roll back the transaction
+    try {
+        $item_ids = $_POST['item_id'] ?? [];
+        $quantities = $_POST['quantity'] ?? [];
+
+        // 1. Delete all existing items for this order
+        $stmt_delete = $conn->prepare("DELETE FROM order_items WHERE order_id = ?");
+        $stmt_delete->bind_param("i", $order_id);
+        $stmt_delete->execute();
+        $stmt_delete->close();
+
+        // 2. Insert the new set of items
+        $stmt_insert = $conn->prepare("INSERT INTO order_items (order_id, item_id, quantity) VALUES (?, ?, ?)");
+        
+        foreach ($item_ids as $index => $item_id) {
+            $quantity = intval($quantities[$index]);
+            $item_id = intval($item_id);
+            // Only insert if both item and quantity are valid
+            if ($item_id > 0 && $quantity > 0) {
+                $stmt_insert->bind_param("iii", $order_id, $item_id, $quantity);
+                $stmt_insert->execute();
+            }
+        }
+        $stmt_insert->close();
+
+        // 3. If everything was successful, commit the transaction
+        $conn->commit();
+        $success_message = "訂單 #" . $order_id . " 的品項已成功更新！";
+
+    } catch (Exception $e) {
+        // If anything fails, roll back the transaction to prevent partial data
         $conn->rollback();
-        $error_message = "更新失敗：" . $exception->getMessage();
+        $error_message = "更新訂單失敗：" . $e->getMessage();
     }
 }
 
 
-// --- DATA FETCHING FOR DISPLAY ---
-// Fetch all products to display in the form
-$products = [];
-$product_result = $conn->query("SELECT id, item_name, item_code, category FROM item ORDER BY category, item_name");
-while ($row = $product_result->fetch_assoc()) {
-    $products[] = $row;
+// --- Fetch data for the page using prepared statements ---
+// Fetch order details for display
+$stmt_order = $conn->prepare("SELECT c.`name(abbreviation)` as customer_name FROM orders o JOIN customer c ON o.customer_id = c.id WHERE o.id = ?");
+$stmt_order->bind_param("i", $order_id);
+$stmt_order->execute();
+$order_result = $stmt_order->get_result();
+$order = $order_result->fetch_assoc();
+$stmt_order->close();
+
+// Fetch all available items and categories for the dropdowns and filters
+$items = [];
+$items_result = $conn->query("SELECT id, item_name, item_code, category FROM item ORDER BY category, item_name ASC");
+while ($row = $items_result->fetch_assoc()) {
+    $items[] = $row;
 }
 
-// Fetch all unique categories for the filter dropdown
 $categories = [];
-$category_result = $conn->query("SELECT DISTINCT category FROM item ORDER BY category");
-while ($row = $category_result->fetch_assoc()) {
+$categories_result = $conn->query("SELECT DISTINCT category FROM item ORDER BY category ASC");
+while($row = $categories_result->fetch_assoc()){
     $categories[] = $row['category'];
 }
 
+// Fetch items currently assigned to this order to pre-populate the form
+$assigned_items = [];
+$stmt_assigned = $conn->prepare("SELECT item_id, quantity FROM order_items WHERE order_id = ?");
+$stmt_assigned->bind_param("i", $order_id);
+$stmt_assigned->execute();
+$assigned_items_result = $stmt_assigned->get_result();
+while($row = $assigned_items_result->fetch_assoc()){
+    $assigned_items[] = $row;
+}
+$stmt_assigned->close();
+
 
 // --- PAGE SETUP ---
-$page_title = '分配產品';
+$page_title = '指派產品至訂單 #' . $order_id;
 require_once __DIR__ . '/../template/header.php';
 ?>
 
 <div class="container mx-auto p-4 sm:p-6 lg:p-8">
     <header class="mb-8">
-        <h1 class="text-3xl font-bold text-gray-900">分配產品至訂單 #<?php echo $order_id; ?></h1>
-        <p class="text-gray-600 mt-1">客戶: <?php echo htmlspecialchars($order_customer_name); ?></p>
+        <h1 class="text-3xl font-bold text-gray-900">指派產品至訂單 <span class="text-indigo-600">#<?php echo $order_id; ?></span></h1>
+        <p class="text-gray-600 mt-1">客戶: <?php echo htmlspecialchars($order['customer_name'] ?? 'N/A'); ?></p>
     </header>
 
-    <?php if ($error_message): ?>
-        <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-6" role="alert">
-            <strong class="font-bold">錯誤！</strong>
-            <span class="block sm:inline"><?php echo $error_message; ?></span>
-        </div>
-    <?php endif; ?>
-
-    <?php if ($success_message): ?>
-        <div class="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded relative mb-6" role="alert">
-            <strong class="font-bold">成功！</strong>
-            <span class="block sm:inline"><?php echo $success_message; ?></span>
-        </div>
-    <?php endif; ?>
-
-    <div class="bg-white p-6 rounded-lg shadow-md">
-        <form action="assign_product.php?order_id=<?php echo $order_id; ?>" method="POST">
-            
-            <!-- Filters -->
-            <div class="flex flex-col md:flex-row gap-4 mb-6 sticky top-0 bg-white py-4 z-10">
-                <input type="text" id="search-input" placeholder="依名稱或編號搜尋產品..." class="w-full md:w-1/2 p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                <select id="category-filter" class="w-full md:w-1/2 p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                    <option value="">所有分類</option>
-                    <?php foreach ($categories as $category): ?>
-                        <option value="<?php echo htmlspecialchars($category); ?>"><?php echo htmlspecialchars($category); ?></option>
-                    <?php endforeach; ?>
-                </select>
+    <div class="bg-white rounded-lg shadow-md p-6 max-w-4xl mx-auto">
+        
+        <?php if (!empty($success_message)): ?>
+            <div class="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded relative mb-4" role="alert">
+                <span><?php echo $success_message; ?></span>
             </div>
+        <?php endif; ?>
+        <?php if (!empty($error_message)): ?>
+            <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4" role="alert">
+                <span><?php echo $error_message; ?></span>
+            </div>
+        <?php endif; ?>
 
-            <!-- Product List Table -->
-            <div class="max-h-[60vh] overflow-y-auto">
-                <table class="w-full table-auto border-collapse">
-                    <thead class="bg-gray-50 sticky top-0">
-                        <tr>
-                            <th class="p-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">產品名稱</th>
-                            <th class="p-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">分類</th>
-                            <th class="p-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-32">數量</th>
-                        </tr>
-                    </thead>
-                    <tbody id="product-table-body">
-                        <?php foreach ($products as $product): ?>
-                            <tr class="product-row border-b" data-category="<?php echo htmlspecialchars($product['category']); ?>" data-name="<?php echo htmlspecialchars(strtolower($product['item_name'])); ?>" data-code="<?php echo htmlspecialchars(strtolower($product['item_code'])); ?>">
-                                <td class="p-3">
-                                    <label for="item-<?php echo $product['id']; ?>" class="font-medium text-gray-900 block">
-                                        <?php echo htmlspecialchars($product['item_name']); ?>
-                                        <span class="text-gray-500 text-sm block"><?php echo htmlspecialchars($product['item_code']); ?></span>
-                                    </label>
-                                </td>
-                                <td class="p-3 text-sm text-gray-600"><?php echo htmlspecialchars($product['category']); ?></td>
-                                <td class="p-3">
-                                    <input 
-                                        type="number" 
-                                        min="0" 
-                                        name="items[<?php echo $product['id']; ?>]" 
-                                        id="item-<?php echo $product['id']; ?>"
-                                        value="<?php echo isset($existing_items[$product['id']]) ? htmlspecialchars($existing_items[$product['id']]) : '0'; ?>"
-                                        class="w-full p-2 border rounded-lg text-center"
-                                    >
-                                </td>
-                            </tr>
+        <form action="assign_product.php" method="POST">
+            <input type="hidden" name="order_id" value="<?php echo $order_id; ?>">
+
+            <!-- Filters for Product Selection -->
+            <div class="mb-6 p-4 bg-gray-50 rounded-lg grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <label for="category-filter" class="block text-sm font-medium text-gray-700 mb-1">依分類篩選</label>
+                    <select id="category-filter" class="w-full p-2 border rounded-lg text-gray-700">
+                        <option value="">所有分類</option>
+                        <?php foreach($categories as $category): ?>
+                            <option value="<?php echo htmlspecialchars($category); ?>"><?php echo htmlspecialchars($category); ?></option>
                         <?php endforeach; ?>
-                    </tbody>
-                </table>
+                    </select>
+                </div>
+                <div>
+                    <label for="search-filter" class="block text-sm font-medium text-gray-700 mb-1">依名稱/編號搜尋</label>
+                    <input type="text" id="search-filter" placeholder="搜尋產品..." class="w-full p-2 border rounded-lg text-gray-700">
+                </div>
             </div>
 
-            <!-- Action Buttons -->
-            <div class="mt-8 flex justify-end gap-4">
-                <a href="../orders.php" class="bg-gray-200 text-gray-700 px-6 py-2 rounded-lg hover:bg-gray-300">返回訂單列表</a>
-                <button type="submit" class="bg-indigo-600 text-white px-6 py-2 rounded-lg hover:bg-indigo-700">儲存變更</button>
+            <!-- Order Items Section -->
+            <h2 class="text-xl font-bold text-gray-800 mb-4">訂單品項</h2>
+            <div id="order-items-container" class="space-y-4">
+                <?php foreach ($assigned_items as $assigned_item): ?>
+                <div class="order-item-row grid grid-cols-12 gap-4 items-center p-2 bg-gray-50 rounded-lg">
+                    <div class="col-span-7">
+                        <select name="item_id[]" class="item-select w-full p-2 border rounded text-gray-700" required>
+                            <option value="">-- 選擇產品 --</option>
+                            <?php foreach ($items as $item): ?>
+                                <option value="<?php echo $item['id']; ?>" data-category="<?php echo htmlspecialchars($item['category']); ?>" <?php echo ($item['id'] == $assigned_item['item_id']) ? 'selected' : ''; ?>>
+                                    <?php echo htmlspecialchars($item['item_name'] . ' (' . $item['item_code'] . ')'); ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <div class="col-span-3">
+                        <input type="number" name="quantity[]" class="w-full p-2 border rounded text-gray-700" placeholder="數量" min="1" value="<?php echo htmlspecialchars($assigned_item['quantity']); ?>" required>
+                    </div>
+                    <div class="col-span-2">
+                        <button type="button" class="remove-item-btn bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded w-full">移除</button>
+                    </div>
+                </div>
+                <?php endforeach; ?>
+            </div>
+
+            <div class="mt-4">
+                <button type="button" id="add-item-btn" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded">
+                    新增品項
+                </button>
+            </div>
+
+            <!-- Submission Buttons -->
+            <div class="flex items-center justify-between mt-8 border-t pt-6">
+                <a href="view_order_details.php?id=<?php echo $order_id; ?>" class="inline-block font-bold text-sm text-gray-600 hover:text-gray-800">
+                    返回訂單詳情
+                </a>
+                <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-6 rounded">
+                    更新訂單品項
+                </button>
             </div>
         </form>
     </div>
 </div>
 
+<!-- Template for new item rows -->
+<template id="item-row-template">
+    <div class="order-item-row grid grid-cols-12 gap-4 items-center p-2 bg-gray-50 rounded-lg">
+        <div class="col-span-7">
+            <select name="item_id[]" class="item-select w-full p-2 border rounded text-gray-700" required>
+                <option value="">-- 選擇產品 --</option>
+                <?php foreach ($items as $item): ?>
+                    <option value="<?php echo $item['id']; ?>" data-category="<?php echo htmlspecialchars($item['category']); ?>">
+                        <?php echo htmlspecialchars($item['item_name'] . ' (' . $item['item_code'] . ')'); ?>
+                    </option>
+                <?php endforeach; ?>
+            </select>
+        </div>
+        <div class="col-span-3">
+            <input type="number" name="quantity[]" class="w-full p-2 border rounded text-gray-700" placeholder="數量" min="1" required>
+        </div>
+        <div class="col-span-2">
+            <button type="button" class="remove-item-btn bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded w-full">移除</button>
+        </div>
+    </div>
+</template>
+
+<!-- JavaScript for Dynamic Rows & Filtering -->
 <script>
-document.addEventListener('DOMContentLoaded', function() {
-    const searchInput = document.getElementById('search-input');
+document.addEventListener('DOMContentLoaded', function () {
+    const container = document.getElementById('order-items-container');
+    const addItemBtn = document.getElementById('add-item-btn');
     const categoryFilter = document.getElementById('category-filter');
-    const productTableBody = document.getElementById('product-table-body');
-    const productRows = productTableBody.getElementsByClassName('product-row');
-
-    function filterProducts() {
-        const searchTerm = searchInput.value.toLowerCase();
-        const selectedCategory = categoryFilter.value;
-
-        for (let row of productRows) {
-            const category = row.getAttribute('data-category');
-            const name = row.getAttribute('data-name');
-            const code = row.getAttribute('data-code');
-
-            const categoryMatch = selectedCategory === '' || category === selectedCategory;
-            const searchMatch = searchTerm === '' || name.includes(searchTerm) || code.includes(searchTerm);
-
-            if (categoryMatch && searchMatch) {
-                row.style.display = '';
-            } else {
-                row.style.display = 'none';
-            }
-        }
+    const searchFilter = document.getElementById('search-filter');
+    const template = document.getElementById('item-row-template');
+    
+    // If there are no items initially, add one empty row for the user to start
+    if (container.children.length === 0) {
+        addNewItemRow();
     }
 
-    searchInput.addEventListener('keyup', filterProducts);
-    categoryFilter.addEventListener('change', filterProducts);
+    function addNewItemRow() {
+        const clone = template.content.cloneNode(true);
+        container.appendChild(clone);
+        filterProductDropdowns(); // Apply current filters to the new row
+    }
+
+    addItemBtn.addEventListener('click', addNewItemRow);
+
+    container.addEventListener('click', function (e) {
+        if (e.target && e.target.classList.contains('remove-item-btn')) {
+            e.target.closest('.order-item-row').remove();
+        }
+    });
+
+    // --- Filtering Logic ---
+    function filterProductDropdowns() {
+        const categoryValue = categoryFilter.value;
+        const searchValue = searchFilter.value.toLowerCase();
+        const allDropdowns = container.querySelectorAll('.item-select');
+
+        allDropdowns.forEach(select => {
+            const selectedValue = select.value; // Preserve the currently selected value
+            const options = select.querySelectorAll('option');
+            
+            options.forEach(option => {
+                // Always show the placeholder and the selected option
+                if (!option.value || option.value === selectedValue) {
+                    option.style.display = '';
+                    return;
+                }
+
+                const optionCategory = option.dataset.category;
+                const optionText = option.textContent.toLowerCase();
+                
+                const categoryMatch = categoryValue === '' || optionCategory === categoryValue;
+                const searchMatch = searchValue === '' || optionText.includes(searchValue);
+
+                option.style.display = (categoryMatch && searchMatch) ? '' : 'none';
+            });
+        });
+    }
+
+    categoryFilter.addEventListener('change', filterProductDropdowns);
+    searchFilter.addEventListener('input', filterProductDropdowns);
 });
 </script>
 
 <?php
-// Include the footer template using a more robust path
+$conn->close();
 require_once __DIR__ . '/../template/footer.php';
 ?>
+

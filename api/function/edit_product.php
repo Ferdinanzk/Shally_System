@@ -1,6 +1,6 @@
 <?php
 // --- EDIT PRODUCT LOGIC ---
-require_once '../connection.php';
+require_once __DIR__ . '/../connection.php';
 
 $item_code = '';
 $item_name = '';

@@ -9,7 +9,7 @@ if (!isset($_GET['id']) || !filter_var($_GET['id'], FILTER_VALIDATE_INT)) {
 }
 
 // 2. Include the database connection
-require_once '../connection.php';
+require_once __DIR__ . '/../connection.php';
 
 // 3. Get the ID and sanitize it
 $order_id = intval($_GET['id']);

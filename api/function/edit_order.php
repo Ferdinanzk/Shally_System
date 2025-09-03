@@ -1,6 +1,6 @@
 <?php
 // --- SETUP & DATA FETCHING ---
-require_once '../connection.php';
+require_once __DIR__ . '/../connection.php';
 
 $error_message = '';
 $success_message = '';

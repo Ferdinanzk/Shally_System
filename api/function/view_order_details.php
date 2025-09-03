@@ -1,6 +1,6 @@
 <?php
 // --- SETUP & DATA FETCHING ---
-require_once '../connection.php';
+require_once __DIR__ . '/../connection.php';
 
 // 1. Validate the Order ID from the URL
 if (!isset($_GET['id']) || !filter_var($_GET['id'], FILTER_VALIDATE_INT)) {

@@ -1,6 +1,6 @@
 <?php
 // --- ADD CUSTOMER LOGIC ---
-require_once '../connection.php';
+require_once __DIR__ . '/../connection.php';
 
 $name = '';
 $cus_code = '';

@@ -8,7 +8,7 @@ if (!isset($_GET['id']) || empty($_GET['id'])) {
 }
 
 // 2. Include database connection
-require_once '../connection.php';
+require_once __DIR__ . '/../connection.php';
 
 // 3. Get and sanitize the ID
 $id = intval($_GET['id']);
